@@ -1,4 +1,4 @@
-# from other_code import sub, sub2
+from other_code import xyz
 import random
 
 entrypoint = lambda f: f
@@ -25,5 +25,8 @@ def abc():
         b = sub()
     except (IOError):
         b = 2
-    
-    return a + b
+    try:
+        z = xyz()
+    except (UnicodeError, ZeroDivisionError, ValueError):
+        pass
+    return a + b + z

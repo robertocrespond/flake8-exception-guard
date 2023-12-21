@@ -1,12 +1,14 @@
-import random
+from other_code_2 import ultimate_test
 
-def sub() -> int:
-    aaa = .5
+def xyz():
+    if 2<3:
+        raise ValueError
+    xxxxx()
+    return 2
 
-    if random.random() < aaa:
-        raise Exception
-    
-    return 10
 
-def sub2() -> int:
-    return 10
+def xxxxx():
+    if 2<3:
+        raise ZeroDivisionError
+    z = ultimate_test()
+    return 2

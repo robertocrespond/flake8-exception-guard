@@ -2,9 +2,10 @@ import ast
 import os
 from importlib import util as importlib_util
 import sys
+from types import ModuleType
 from typing import Optional
 import inspect
-
+from copy import deepcopy
 
 class ImportResolver:
     def __init__(self, file_path, _imports = None, _processed= None) -> None:
@@ -74,9 +75,13 @@ from dataclasses import dataclass
 
 @dataclass
 class Context:
-    prev: ast.AST
+    prev: "Context"
+    # prev: ast.AST
+    node: ast.AST
     covered_exceptions: dict = None
     stack: list = None
+    fp: str = None
+    module: ModuleType = None
 
 class ExceptionDiscoverer:
 
@@ -99,6 +104,7 @@ class FileScan:
         self._current_module = importlib_util.module_from_spec(current_module_spec)
         current_module_spec.loader.exec_module(self._current_module)
 
+
     def _get_exception_name(self, node):
         if isinstance(node.exc, ast.Attribute):
             return f"{node.exc.value.id}.{node.exc.attr}"
@@ -107,9 +113,31 @@ class FileScan:
         elif isinstance(node.exc, ast.Call):
             return node.exc.func.id
         return None
+    
+    def _deep_copy_ctx(self, ctx):
+        if ctx is None:
+            return None
+        return Context(
+            prev=self._deep_copy_ctx(ctx.prev), # TODO: might not be needed
+            node=ctx.node,
+            covered_exceptions=deepcopy(ctx.covered_exceptions),
+            stack=deepcopy(ctx.stack),
+            fp=deepcopy(ctx.fp),
+            module=ctx.module
+        )
 
     def _process_fcn(self, node, _depth=0 , _ctx: Optional[Context] = None):
-        new_ctx = Context(prev=node, covered_exceptions=_ctx.covered_exceptions if _ctx else {}, stack=_ctx.stack if _ctx else [])
+        if _ctx is not None:
+            _ctx = self._deep_copy_ctx(_ctx)
+
+        new_ctx = Context(
+            prev=_ctx,
+            node=node,
+            covered_exceptions=_ctx.covered_exceptions if _ctx else {},
+            stack=_ctx.stack if _ctx else [],
+            fp=_ctx.fp if _ctx else self.fp,
+            module=_ctx.module if _ctx else self._current_module
+        )
 
         #### DEBUG
         # print("     " * _depth, node, _ctx)
@@ -141,7 +169,7 @@ class FileScan:
 
             # TODO: must check also with parent classes, i.e. if the exception is a subclass of the caught exception
             # print("     " * _depth, exception_name)
-            debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{self.fp}", line {node.lineno}']
+            debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
 
             if exception_name not in new_ctx.covered_exceptions:
                 verbose_stack = '\n'.join(debug_log)
@@ -150,19 +178,51 @@ class FileScan:
             # TODO: must decrease the count of the exception in the context
 
         # Function Call
-        if _ctx and isinstance(_ctx.prev, ast.Call) and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+        if _ctx and isinstance(_ctx.node, ast.Call) and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and not isinstance(_ctx.prev.node, ast.Raise):
             fcn_name = node.id
-
-            new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, self.fp)]
+            new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, _ctx.fp)]
 
             # load it
 
             # TODO: I have to enter the function recursively.
             # Have to go to fcn sub, then check if it is calling any functions.
             # Need to do DFS, forwarding context of all caught exceptions and then start checking if the function is raising any of the exceptions that are caught in the context.
-            if hasattr(self._current_module, fcn_name):
-                fcn = getattr(self._current_module, fcn_name)
-                fcn_source = inspect.getsource(fcn)
+            # print("     " * _depth, fcn_name, hasattr(self._current_module, fcn_name))
+            if not hasattr(_ctx.module, fcn_name):
+                # TODO: inner function that is not exposed to module
+                print(f"Function {fcn_name} not found in {self.fp}")
+                return
+
+            fcn = getattr(_ctx.module, fcn_name)
+            fcn_file_path = inspect.getfile(fcn)
+
+            if fcn_file_path == self.fp:
+                for _n in ast.walk(ast.parse(self.source_code)):
+                    if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
+                        self._process_fcn(_n, _depth+1, new_ctx)
+            else:
+                fcn_module = inspect.getmodule(fcn)
+
+                nested_new_ctx = self._deep_copy_ctx(new_ctx)
+                nested_new_ctx.fp = fcn_file_path
+                nested_new_ctx.module = fcn_module
+                fcn_file_ast = ast.parse(open(fcn_file_path, 'r').read(), filename=fcn_file_path)
+
+                # fcn_source = inspect.getsource(fcn)
+
+                for _n in ast.walk(fcn_file_ast):
+                    if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
+                        self._process_fcn(_n, _depth+1, nested_new_ctx)
+                
+
+
+
+                # print("     " * _depth, fcn_name, fcn_module, fcn_file)
+                # fcn_ast = ast.parse(fcn_source, filename=inspect.getfile(fcn))
+
+                # get function module and get ast tree from module
+                # print(fcn.__module__)
+                # 
 
 
 
@@ -173,15 +233,11 @@ class FileScan:
                 # fcn_source = ast.unparse(import_nodes) + '\n\n\n' + fcn_source
                 # fcn_ast = ast.parse(fcn_source)
                 
-                for _n in ast.walk(ast.parse(self.source_code)):
-                    if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
-                        self._process_fcn(_n, _depth+1, new_ctx)
+
 
                 # fcn_ast = import_nodes + [node for node in ast.walk(fcn_ast)]
                 
                 # print('\n\n\n ',ast.unparse(import_nodes), '\n\n\n')
-            else:
-                print("TODO: load module")
 
 
             # source_code = self._get_function_source_code(fcn_name)
