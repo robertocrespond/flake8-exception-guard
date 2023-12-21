@@ -21,18 +21,24 @@ class Rob:
     def do_something(self):
         raise ImportError
 
+# d = Rob()
+
 @entrypoint
 def abc():
-    a = sub()
+    # a = sub()
 
-    try:
-        b = sub()
-    except (IOError):
-        b = 2
-    try:
-        z = xyz()
-        d = Rob()
-        d.do_something()
-    except (UnicodeError, ZeroDivisionError, ValueError):
-        pass
-    return a + b + z
+    def do_something2():
+        raise AttributeError
+    
+
+    do_something2()
+
+    # try:
+    #     b = sub()
+    # except (IOError):
+    #     b = 2
+    # try:
+    #     d.do_something()
+    # except (UnicodeError, ZeroDivisionError, ValueError):
+    #     pass
+    return 1 + 2

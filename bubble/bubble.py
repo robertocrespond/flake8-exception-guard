@@ -82,6 +82,9 @@ class Context:
     fp: str = None
     module: ModuleType = None
 
+    def __repr__(self) -> str:
+        return f'Context({self.covered_exceptions}, {self.stack}, {self.fp}, {self.module.__name__})'
+
 
 class FileScan:
     def __init__(self, fp: str):
@@ -96,6 +99,19 @@ class FileScan:
         self._current_module = importlib_util.module_from_spec(current_module_spec)
         current_module_spec.loader.exec_module(self._current_module)
 
+
+    def _is_fcn(self, node, ctx):
+        if ctx is None:
+            return False
+        
+        return ctx and isinstance(ctx.node, ast.Call) and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and not isinstance(ctx.prev.node, ast.Raise)
+
+    def _is_method(self, node, ctx):
+        if ctx is None:
+            return False
+        
+        return ctx and isinstance(ctx.node, ast.Call) and isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load) and not isinstance(ctx.prev.node, ast.Raise)
+        
 
     def _get_exception_name(self, node):
         if isinstance(node.exc, ast.Attribute):
@@ -170,16 +186,26 @@ class FileScan:
             # TODO: must decrease the count of the exception in the context
 
         # Function Call
-        if _ctx and isinstance(_ctx.node, ast.Call) and isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and not isinstance(_ctx.prev.node, ast.Raise):
-            fcn_name = node.id
-            new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, _ctx.fp)]
+        if self._is_method(node, _ctx):
+            print('MMMMMMMMM', node.value.__dict__)
+            method_name = node.attr
+            # new_ctx.stack = [s for s in new_ctx.stack] + [(method_name, node.lineno, _ctx.fp)]
+            print(method_name)
 
-            # load it
+        if self._is_fcn(node, _ctx):
+            fcn_name = node.id
+            print('FCCCCCCCN ', fcn_name)
+            new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, _ctx.fp)]
 
             # TODO: I have to enter the function recursively.
             # Have to go to fcn sub, then check if it is calling any functions.
             # Need to do DFS, forwarding context of all caught exceptions and then start checking if the function is raising any of the exceptions that are caught in the context.
             # print("     " * _depth, fcn_name, hasattr(self._current_module, fcn_name))
+
+            # TODO: do a lookup in the order function -> module -> builtins
+            # I think you could reverse search from the context.prev and embedd within the ctx the scope
+
+
             if not hasattr(_ctx.module, fcn_name):
 
                 if __builtins__.get(fcn_name):
@@ -199,6 +225,12 @@ class FileScan:
                 return
 
             fcn = getattr(_ctx.module, fcn_name)
+            print(fcn, type(fcn))
+
+            if inspect.isclass(fcn):
+                # TODO: __init__ could raise Errors, but ignoring for now
+                print(f"Ignoring {fcn_name} class initialization. __init__ could raise Errors, but ignoring for now")
+                return
             fcn_file_path = inspect.getfile(fcn)
 
             if fcn_file_path == self.fp:
@@ -213,73 +245,12 @@ class FileScan:
                 nested_new_ctx.module = fcn_module
                 fcn_file_ast = ast.parse(open(fcn_file_path, 'r').read(), filename=fcn_file_path)
 
-                # fcn_source = inspect.getsource(fcn)
-
                 for _n in ast.walk(fcn_file_ast):
                     if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
                         self._process_fcn(_n, _depth+1, nested_new_ctx)
                 
-
-
-
-                # print("     " * _depth, fcn_name, fcn_module, fcn_file)
-                # fcn_ast = ast.parse(fcn_source, filename=inspect.getfile(fcn))
-
-                # get function module and get ast tree from module
-                # print(fcn.__module__)
-                # 
-
-
-
-                # new_ast = [node for node in ast.walk(ast.parse(self.source_code)) if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom) or (isinstance(node, ast.FunctionDef) and node.name == fcn_name)]
-                # new_ast = ast.parse(ast.unparse(new_ast))
-                # TODO: should just be imports before code, this can be build on the outer iteration
-                # import_nodes = [node for node in ast.walk(self.ast_tree) if isinstance(node, ast.Import) or isinstance(node, ast.ImportFrom)]
-                # fcn_source = ast.unparse(import_nodes) + '\n\n\n' + fcn_source
-                # fcn_ast = ast.parse(fcn_source)
-                
-
-
-                # fcn_ast = import_nodes + [node for node in ast.walk(fcn_ast)]
-                
-                # print('\n\n\n ',ast.unparse(import_nodes), '\n\n\n')
-
-
-            # source_code = self._get_function_source_code(fcn_name)
-
-
-            # TODO: find the source code for the function
-            #    - check if the function is defined in the current module
-            #    - check if the function is imported
-
-            # TODO: load the module
-            # TODO: ast parse module
-            # TODO: get function
-
-
-            # TODO: check if the function is defined in the current module
-
-            # TODO: check if the function can raise an exception
-
-            # TODO: check if call is covered by a try/except block
-
-
-
-
-
-
-
-
-
-
         for child_node in ast.iter_child_nodes(node):
             self._process_fcn(child_node, _depth+1, new_ctx)
-
-
-
-
-            # if hasattr(child_node, "body"):
-            #     for item in node.body:
 
     def scan_function(self, node):
         return self._process_fcn(node)
