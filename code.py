@@ -17,6 +17,10 @@ def sub2() -> int:
         raise AttributeError
     return roberto
 
+class Rob:
+    def do_something(self):
+        raise ImportError
+
 @entrypoint
 def abc():
     a = sub()
@@ -27,6 +31,8 @@ def abc():
         b = 2
     try:
         z = xyz()
+        d = Rob()
+        d.do_something()
     except (UnicodeError, ZeroDivisionError, ValueError):
         pass
     return a + b + z

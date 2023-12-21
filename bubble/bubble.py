@@ -76,19 +76,11 @@ from dataclasses import dataclass
 @dataclass
 class Context:
     prev: "Context"
-    # prev: ast.AST
     node: ast.AST
     covered_exceptions: dict = None
     stack: list = None
     fp: str = None
     module: ModuleType = None
-
-class ExceptionDiscoverer:
-
-    def discover_exceptions(self, fcn_source: str) -> None:
-        self.tree = ast.parse(fcn_source)
-        
-
 
 
 class FileScan:
@@ -189,8 +181,21 @@ class FileScan:
             # Need to do DFS, forwarding context of all caught exceptions and then start checking if the function is raising any of the exceptions that are caught in the context.
             # print("     " * _depth, fcn_name, hasattr(self._current_module, fcn_name))
             if not hasattr(_ctx.module, fcn_name):
+
+                if __builtins__.get(fcn_name):
+                    print(f"Function `{fcn_name}` is builtin so ignoring")
+                    return
+
+
+                # if inspect.getmodule(p).__name__ == "builtins":
+                #     print(f"Function {fcn_name} is builtin so ignoring")
+                #     return
+
+                # if inspect.getmodule(print)
                 # TODO: inner function that is not exposed to module
-                print(f"Function {fcn_name} not found in {self.fp}")
+                # print(_ctx.module)
+                # print(inspect.getmodule(print).__name__ == "bultins")
+                print(f"Function {fcn_name} not found in {_ctx.fp}")
                 return
 
             fcn = getattr(_ctx.module, fcn_name)
