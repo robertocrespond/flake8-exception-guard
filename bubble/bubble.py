@@ -89,6 +89,7 @@ class Context:
 class FileScan:
     def __init__(self, fp: str):
         self.fp = fp
+        self._ok = True
 
         with open(fp, 'r') as file:
             self.source_code = file.read()
@@ -177,10 +178,11 @@ class FileScan:
 
             # TODO: must check also with parent classes, i.e. if the exception is a subclass of the caught exception
             # print("     " * _depth, exception_name)
-            debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
 
             if exception_name not in new_ctx.covered_exceptions:
+                debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
                 verbose_stack = '\n'.join(debug_log)
+                self._ok = False
                 print(f"{self.fp} {exception_name} not caught:\n{verbose_stack}")
 
             # TODO: must decrease the count of the exception in the context
@@ -252,8 +254,9 @@ class FileScan:
         for child_node in ast.iter_child_nodes(node):
             self._process_fcn(child_node, _depth+1, new_ctx)
 
-    def scan_function(self, node):
-        return self._process_fcn(node)
+    def are_exceptions_caught(self, node) -> bool:
+        self._process_fcn(node)
+        return self._ok
 
 
 
@@ -263,6 +266,7 @@ class FileScan:
 class Bubble:
     def __init__(self, base_path) -> None:
         self.base_path = base_path
+        self._exit_code = 0
 
     def _has_inspect_decorator(self, node):
         return any(
@@ -275,16 +279,19 @@ class Bubble:
 
         for node in ast.walk(file_scan.ast_tree):
             if isinstance(node, ast.FunctionDef) and self._has_inspect_decorator(node):
-                file_scan.scan_function(node)
+                if not file_scan.are_exceptions_caught(node):
+                    self._exit_code = 1
         
     def scan(self):
         if os.path.isfile(self.base_path):
-            return self._scan_file(self.base_path)
-
+            self._scan_file(self.base_path)
+            return self._exit_code
+        
         for root, dirs, files in os.walk(self.base_path):
             for file in files:
                 if file.endswith(".py"):
                     file_path = os.path.join(root, file)
                     self._scan_file(file_path)
 
+        return self._exit_code
 

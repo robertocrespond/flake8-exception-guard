@@ -11,7 +11,7 @@ def main():
         '-f',
         '--file',
         dest='file_path_alias',
-        metavar='FILE_PATH_ALIAS',
+        metavar='FILE_PATH',
         help='Shortcut alias for the file path'
     )
 
@@ -21,10 +21,7 @@ def main():
     file_path = os.path.abspath(base_file_path)
 
     scaner = Bubble(base_path=file_path)
-    scaner.scan()
-
-
-
+    return scaner.scan()
 
 
 if __name__ == "__main__":
