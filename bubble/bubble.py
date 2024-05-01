@@ -247,7 +247,9 @@ class FileScan:
                 nested_new_ctx = self._deep_copy_ctx(new_ctx)
                 nested_new_ctx.fp = fcn_file_path
                 nested_new_ctx.module = fcn_module
-                fcn_file_ast = ast.parse(open(fcn_file_path, 'r').read(), filename=fcn_file_path)
+                with open(fcn_file_path, 'r') as file:
+                    fcn_source_code = file.read()
+                    fcn_file_ast = ast.parse(fcn_source_code, filename=fcn_file_path)
 
                 for _n in ast.walk(fcn_file_ast):
                     if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:

@@ -1,0 +1,41 @@
+# append current dir to path
+import sys
+from pathlib import Path
+current_dir = Path(__file__).parent.resolve()
+sys.path.append(str(current_dir))
+
+from example.other_b import raises_io_error_and_attribute_error_indirectly
+
+
+
+# *********************************************************************************
+### Entrypoints
+
+def handled():
+    try:
+        b = raises_io_error_and_attribute_error_indirectly()
+    except (IOError, AttributeError):
+        b = 2
+
+
+    # check if multiple exceptions are handled at once
+    try:
+        b = raises_io_error_and_attribute_error_indirectly()
+    except (IOError, AttributeError):
+        b = 2
+    
+    # check if multiple exceptions are handled separately
+    try:
+        try:
+            b = raises_io_error_and_attribute_error_indirectly()
+        except AttributeError:
+            b = 2
+    except IOError:
+        b = 3
+
+    return 1 + b
+
+def unhandled():
+    b = raises_io_error_and_attribute_error_indirectly()
+    
+    return 1 + b

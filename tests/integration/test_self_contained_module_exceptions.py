@@ -13,6 +13,8 @@ REGEX_PATTERN = re.compile(REGEX_RAW_PATTERN)
 FILES = [
     'single_exception.py',
     'single_exception_nested.py',
+    'multiple_exceptions.py',
+    'multiple_exceptions_nested.py',
 ]
 
 @pytest.mark.parametrize(('file_name',), [(file,) for file in FILES], ids=[f'file: {file}' for file in FILES])
@@ -25,7 +27,7 @@ def test_self_contained_module_warning_throw_if_unhandled_exception(file_name):
 
 
 @pytest.mark.parametrize(('file_name',), [(file,) for file in FILES], ids=[f'file: {file}' for file in FILES])
-def test_same_file_no_warning_if_handled_exception(file_name):
+def test_self_contained_module_no_warning_if_handled_exception(file_name):
     with warnings.catch_warnings(record=True) as record:
         warnings.simplefilter("always")
         Bubble(
