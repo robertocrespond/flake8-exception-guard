@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Optional
 import inspect
 from copy import deepcopy
+import warnings
 
 class ImportResolver:
     def __init__(self, file_path, _imports = None, _processed= None) -> None:
@@ -183,7 +184,8 @@ class FileScan:
                 debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
                 verbose_stack = '\n'.join(debug_log)
                 self._ok = False
-                print(f"{self.fp} {exception_name} not caught:\n{verbose_stack}")
+                # print(f"{self.fp} {exception_name} not caught:\n{verbose_stack}")
+                warnings.warn(f"<Bubble> {self.fp} {exception_name} not handled:\n{verbose_stack}")
 
             # TODO: must decrease the count of the exception in the context
 
@@ -264,29 +266,35 @@ class FileScan:
 
 
 class Bubble:
-    def __init__(self, base_path) -> None:
+    def __init__(self, base_path: str, entrypoint: str) -> None:
         self.base_path = base_path
+        self.entrypoint = entrypoint
         self._exit_code = 0
-
-    def _has_inspect_decorator(self, node):
-        return any(
-            isinstance(decorator, ast.Name) and decorator.id == "entrypoint"
-            for decorator in node.decorator_list
-        )
 
     def _scan_file(self, file_path):
         file_scan = FileScan(fp=file_path)
 
+        entrypoint_found = False
         for node in ast.walk(file_scan.ast_tree):
-            if isinstance(node, ast.FunctionDef) and self._has_inspect_decorator(node):
+            if isinstance(node, ast.FunctionDef) and node.name == self.entrypoint:
+                entrypoint_found = True
                 if not file_scan.are_exceptions_caught(node):
                     self._exit_code = 1
+                    break
+            if isinstance(node, ast.FunctionDef):
+                print(node.name)
+        if not entrypoint_found:
+            raise AttributeError(f"Entrypoint function not found: {self.entrypoint}")
         
     def scan(self):
+        if not os.path.exists(self.base_path):
+            raise FileNotFoundError(f"File or directory not found: {self.base_path}")
+    
         if os.path.isfile(self.base_path):
             self._scan_file(self.base_path)
             return self._exit_code
         
+        # directory
         for root, dirs, files in os.walk(self.base_path):
             for file in files:
                 if file.endswith(".py"):

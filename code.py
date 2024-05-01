@@ -9,7 +9,9 @@ def sub() -> int:
     if random.random() < aaa:
         raise IOError
     
-    return 10 + sub2()
+    return 10
+    
+    # return 10 + sub2()
 
 def sub2() -> int:
     roberto = 100 
@@ -27,16 +29,16 @@ class Rob:
 def abc():
     # a = sub()
 
-    def do_something2():
-        raise AttributeError
+    # def do_something2():
+    #     raise AttributeError
     
 
-    do_something2()
+    # do_something2()
 
-    # try:
-    #     b = sub()
-    # except (IOError):
-    #     b = 2
+    try:
+        b = sub()
+    except (IOError):
+        b = 2
     # try:
     #     d.do_something()
     # except (UnicodeError, ZeroDivisionError, ValueError):
