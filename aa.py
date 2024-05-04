@@ -84,5 +84,6 @@ def get_called_functions(file_path):
     # recursive_traverse(tree)
 
 # Example usage
-file_path = './code.py'
-get_called_functions(file_path)
+if __name__ == '__main__':
+    file_path = './code.py'
+    get_called_functions(file_path)

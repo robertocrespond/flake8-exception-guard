@@ -1,4 +1,3 @@
-print(2)
 import argparse
 import os
 from ..bubble import Bubble

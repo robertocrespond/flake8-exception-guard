@@ -6,7 +6,9 @@ from types import ModuleType
 from typing import Optional
 import inspect
 from copy import deepcopy
+import textwrap
 import warnings
+import types
 
 class ImportResolver:
     def __init__(self, file_path, _imports = None, _processed= None) -> None:
@@ -17,7 +19,8 @@ class ImportResolver:
         with open(file_path, 'r') as file:
             self.source_code = file.read()
 
-        self.ast_tree = ast.parse(self.source_code, filename=file_path)
+        # TODO: this dedent might not be needed
+        self.ast_tree = ast.parse(textwrap.dedent(self.source_code), filename=file_path)
         self._parse_imports()
 
     def _is_installed(self, module_id):
@@ -101,6 +104,8 @@ class FileScan:
         self._current_module = importlib_util.module_from_spec(current_module_spec)
         current_module_spec.loader.exec_module(self._current_module)
 
+        self._mem_addr_to_class_node = {}
+
 
     def _is_fcn(self, node, ctx):
         if ctx is None:
@@ -149,11 +154,11 @@ class FileScan:
             module=_ctx.module if _ctx else self._current_module
         )
 
-        #### DEBUG
-        # print("     " * _depth, node, _ctx)
+        ### DEBUG
+        # print("     " * _depth, node)
+        # print("|" * _depth, node.__dict__)
         # if isinstance(node, ast.Name):
-        #     print("     " * _depth, node.id)
-
+        #     print("     " * _depth,'NAME=', node.id, node.__dict__)
 
         if isinstance(node, ast.Try):
             for handler in node.handlers:
@@ -184,62 +189,76 @@ class FileScan:
                 debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
                 verbose_stack = '\n'.join(debug_log)
                 self._ok = False
-                # print(f"{self.fp} {exception_name} not caught:\n{verbose_stack}")
-                warnings.warn(f"<Bubble> {self.fp} {exception_name} not handled:\n{verbose_stack}")
+                print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
+                # warnings.warn(f"<Bubble> {self.fp} {exception_name} not handled:\n{verbose_stack}")
 
             # TODO: must decrease the count of the exception in the context
 
         # Function Call
         if self._is_method(node, _ctx):
-            print('MMMMMMMMM', node.value.__dict__)
             method_name = node.attr
-            # new_ctx.stack = [s for s in new_ctx.stack] + [(method_name, node.lineno, _ctx.fp)]
-            print(method_name)
+            new_ctx.stack = [s for s in new_ctx.stack] + [(method_name, node.lineno, _ctx.fp)]
+
+            # get class node
+            class_node = self._mem_addr_to_class_node.get(hex(id(node.ctx)))
+            if class_node is None:
+                warnings.warn(f'Not exploring method ".{method_name}" File: "{self.fp}", line {node.lineno}')
+                return
+
+            for _n in ast.walk(class_node):
+                if isinstance(_n, ast.FunctionDef) and _n.name == method_name:
+                    self._process_fcn(_n, _depth+1, new_ctx)
 
         if self._is_fcn(node, _ctx):
             fcn_name = node.id
-            print('FCCCCCCCN ', fcn_name)
+            # print('FCCCCCCCN ', fcn_name)
             new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, _ctx.fp)]
 
             # TODO: I have to enter the function recursively.
             # Have to go to fcn sub, then check if it is calling any functions.
             # Need to do DFS, forwarding context of all caught exceptions and then start checking if the function is raising any of the exceptions that are caught in the context.
-            # print("     " * _depth, fcn_name, hasattr(self._current_module, fcn_name))
+            # print(fcn_name, hasattr(self._current_module, fcn_name))
 
             # TODO: do a lookup in the order function -> module -> builtins
             # I think you could reverse search from the context.prev and embedd within the ctx the scope
 
-
             if not hasattr(_ctx.module, fcn_name):
 
                 if __builtins__.get(fcn_name):
-                    print(f"Function `{fcn_name}` is builtin so ignoring")
+                    warnings.warn(f"Function {fcn_name} is builtin so ignoring")
                     return
 
-
-                # if inspect.getmodule(p).__name__ == "builtins":
-                #     print(f"Function {fcn_name} is builtin so ignoring")
-                #     return
-
-                # if inspect.getmodule(print)
-                # TODO: inner function that is not exposed to module
-                # print(_ctx.module)
-                # print(inspect.getmodule(print).__name__ == "bultins")
-                print(f"Function {fcn_name} not found in {_ctx.fp}")
+                # TODO: handle inner functions as those are not exposed to module
+                warnings.warn(f"Function {fcn_name} not found in {_ctx.fp}")
                 return
 
             fcn = getattr(_ctx.module, fcn_name)
-            print(fcn, type(fcn))
+            is_builtin = isinstance(fcn, types.BuiltinFunctionType)
 
-            if inspect.isclass(fcn):
-                # TODO: __init__ could raise Errors, but ignoring for now
-                print(f"Ignoring {fcn_name} class initialization. __init__ could raise Errors, but ignoring for now")
+            if is_builtin:
+                # TODO: cached version of all exceptiosn the builtin functions can raise
+                warnings.warn(f"Function {fcn_name} is builtin so ignoring")
                 return
-            fcn_file_path = inspect.getfile(fcn)
 
+            is_class = inspect.isclass(fcn)
+
+            if is_class:
+                fcn_file_path = inspect.getfile(fcn.__init__)
+            else:
+                fcn_file_path = inspect.getfile(fcn)
+
+            # fcn is defined within same file
+            within_class = False # TODO: this will break for nested class definitions
             if fcn_file_path == self.fp:
+                print(fcn_name, 'same file')
                 for _n in ast.walk(ast.parse(self.source_code)):
-                    if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
+                    if not is_class and isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
+                        self._process_fcn(_n, _depth+1, new_ctx)
+                    if is_class and isinstance(_n, ast.ClassDef) and _n.name == fcn_name:
+                        within_class = True
+                        self._mem_addr_to_class_node[hex(id(node.ctx))] = _n
+                        continue
+                    if is_class and isinstance(_n, ast.FunctionDef) and _n.name == '__init__' and within_class:
                         self._process_fcn(_n, _depth+1, new_ctx)
             else:
                 fcn_module = inspect.getmodule(fcn)
@@ -254,7 +273,7 @@ class FileScan:
                 for _n in ast.walk(fcn_file_ast):
                     if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
                         self._process_fcn(_n, _depth+1, nested_new_ctx)
-                
+
         for child_node in ast.iter_child_nodes(node):
             self._process_fcn(child_node, _depth+1, new_ctx)
 
@@ -279,12 +298,13 @@ class Bubble:
         entrypoint_found = False
         for node in ast.walk(file_scan.ast_tree):
             if isinstance(node, ast.FunctionDef) and node.name == self.entrypoint:
+                print('ENTRYPOINT FOUND ', node.name)
                 entrypoint_found = True
                 if not file_scan.are_exceptions_caught(node):
                     self._exit_code = 1
                     break
-            if isinstance(node, ast.FunctionDef):
-                print(node.name)
+            # if isinstance(node, ast.FunctionDef):
+            #     print(node.name)
         if not entrypoint_found:
             raise AttributeError(f"Entrypoint function not found: {self.entrypoint}")
         

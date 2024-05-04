@@ -1,7 +1,11 @@
 import random
 
+from random import random
+
 def sub() -> int:
     aaa = .5
+
+    s = random()
 
     if random.random() < aaa:
         raise IOError
