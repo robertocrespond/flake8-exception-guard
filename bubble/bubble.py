@@ -1,6 +1,8 @@
 import ast
+import builtins
 import os
 from importlib import util as importlib_util
+import re
 import sys
 from types import ModuleType
 from typing import Optional
@@ -9,6 +11,9 @@ from copy import deepcopy
 import textwrap
 import warnings
 import types
+from collections import ChainMap
+
+deprecated = lambda f: f
 
 class ImportResolver:
     def __init__(self, file_path, _imports = None, _processed= None) -> None:
@@ -84,10 +89,9 @@ class Context:
     covered_exceptions: dict = None
     stack: list = None
     fp: str = None
-    module: ModuleType = None
 
     def __repr__(self) -> str:
-        return f'Context({self.covered_exceptions}, {self.stack}, {self.fp}, {self.module.__name__})'
+        return f'Context({self.covered_exceptions}, {self.stack}, {self.fp})'
 
 
 class FileScan:
@@ -97,6 +101,8 @@ class FileScan:
 
         with open(fp, 'r') as file:
             self.source_code = file.read()
+        with open(fp, 'r') as file:
+            self.source_code_lines = file.readlines()
 
         self.ast_tree = ast.parse(self.source_code, filename=fp)
 
@@ -138,152 +144,193 @@ class FileScan:
             covered_exceptions=deepcopy(ctx.covered_exceptions),
             stack=deepcopy(ctx.stack),
             fp=deepcopy(ctx.fp),
-            module=ctx.module
         )
-
-    def _process_fcn(self, node, _depth=0 , _ctx: Optional[Context] = None):
+    
+    def _process_fcn(self, func, _ids=None, _depth=0 , _ctx: Optional[Context] = None):
         if _ctx is not None:
             _ctx = self._deep_copy_ctx(_ctx)
 
         new_ctx = Context(
             prev=_ctx,
-            node=node,
+            node=None,
             covered_exceptions=_ctx.covered_exceptions if _ctx else {},
             stack=_ctx.stack if _ctx else [],
             fp=_ctx.fp if _ctx else self.fp,
-            module=_ctx.module if _ctx else self._current_module
         )
 
-        ### DEBUG
-        # print("     " * _depth, node)
-        # print("|" * _depth, node.__dict__)
-        # if isinstance(node, ast.Name):
-        #     print("     " * _depth,'NAME=', node.id, node.__dict__)
 
-        if isinstance(node, ast.Try):
-            for handler in node.handlers:
-                if isinstance(handler.type, ast.Tuple):
-                    for _type in handler.type.elts:
-                        new_ctx.covered_exceptions[_type.id] = new_ctx.covered_exceptions.get(_type.id, 0) + 1
+
+
+        sc_lines = self.source_code_lines
+
+        try:
+            vars = ChainMap(*inspect.getclosurevars(func)[:3])
+            source = textwrap.dedent(inspect.getsource(func))
+        # except Exception as e:
+        #     raise e
+        except (TypeError, OSError):
+            exc = re.findall(r'\w+Error', func.__doc__)
+            if exc:
+                for exception_name in exc:
+                    if exception_name not in new_ctx.covered_exceptions:
+                        line_offset = open(new_ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
+                        debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{new_ctx.fp}", line {line_offset + n.lineno}']
+                        verbose_stack = '\n'.join(debug_log)
+                        self._ok = False
+                        print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
+            return
+                #     if hasattr(builtins, e):
+                #         yield getattr(builtins, e)
+            # return
+
+        # print(vars)
+        # print(source)
+
+        if inspect.isclass(func):
+            fcn_file_path = inspect.getfile(func.__init__)
+        else:
+            fcn_file_path = inspect.getfile(func)
+        new_ctx.fp = fcn_file_path
+        upstream_cls = self
+
+        # print(fcn_file_path)
+
+        class _Visitor(ast.NodeTransformer):
+            def __init__(self, log_id=""):
+                self.nodes = []
+                self.log_id = log_id
+                self.order_op = 0
+
+            def _order_op(self):
+                self.order_op += 1
+                return self.order_op
+
+            def visit_Raise(self, n):
+                self.nodes.append(n.exc)
+
+            def visit_Call(self, n):
+                c, ob = n.func, None
+                if isinstance(c, ast.Attribute):
+                    parts = []
+                    while getattr(c, 'value', None):
+                        parts.append(c.attr)
+                        c = c.value
+                    if c.id in vars:
+                        ob = vars[c.id]
+                        for name in reversed(parts):
+                            try:
+                                ob = getattr(ob, name)
+                            except AttributeError:
+                                exc = re.findall(r'\w+Error', ob.__doc__)
+                                if exc:
+                                    for exception_name in exc:
+                                        if exception_name not in new_ctx.covered_exceptions:
+                                            line_offset = open(new_ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
+                                            debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{new_ctx.fp}", line {line_offset + n.lineno}']
+                                            verbose_stack = '\n'.join(debug_log)
+                                            upstream_cls._ok = False
+                                            print(f"{upstream_cls.fp} {exception_name} not handled:\n{verbose_stack}")
+                                
+                
+
+                elif isinstance(c, ast.Name):
+                    if c.id in vars:
+                        ob = vars[c.id]
+
+                if ob is not None and id(ob) not in _ids:
+                    line_offset = sc_lines.index(textwrap.dedent(source).split('\n')[0] + '\n')
+                    new_ctx.stack = [s for s in new_ctx.stack] + [(ob.__name__, line_offset + n.lineno, new_ctx.fp)]
+                    upstream_cls._process_fcn(ob, _ids=_ids, _depth=_depth+1, _ctx=new_ctx)
+                    _ids.add(id(ob))
+
+            def visit_Expr(self, n):
+                if not isinstance(n.value, ast.Call):
+                    return
+                c, ob = n.value.func, None
+                if isinstance(c, ast.Attribute):
+                    parts = []
+                    while getattr(c, 'value', None):
+                        parts.append(c.attr)
+                        c = c.value
+                    if c.id in vars:
+                        ob = vars[c.id]
+                        for name in reversed(parts):
+                            ob = getattr(ob, name)
+
+                elif isinstance(c, ast.Name):
+                    if c.id in vars:
+                        ob = vars[c.id]
+
+                if ob is not None and id(ob) not in _ids:
+                    new_ctx.stack = [s for s in new_ctx.stack] + [(ob.__name__, n.lineno, new_ctx.fp)]
+                    upstream_cls._process_fcn(ob, _ids=_ids, _depth=_depth+1, _ctx=new_ctx)
+                    _ids.add(id(ob))
+
+            def visit_Try(self, n):
+                print(self._order_op(),'TRY', n.__dict__)
+                for handler in n.handlers:
+                    if isinstance(handler.type, ast.Tuple):
+                        for _type in handler.type.elts:
+                            new_ctx.covered_exceptions[_type.id] = new_ctx.covered_exceptions.get(_type.id, 0) + 1
+                    else:
+                        new_ctx.covered_exceptions[handler.type.id] = new_ctx.covered_exceptions.get(handler.type.id, 0) + 1
+                print(new_ctx.covered_exceptions)
+                self.generic_visit(n)
+
+            def visit_ExceptHandler(self, n):
+                # At this point have'nt explored the body of the except block (inner function calls)
+                print(self._order_op(), 'EXC', n.__dict__)
+                if isinstance(n.type, ast.Tuple):
+                    for _type in n.type.elts:
+                        new_ctx.covered_exceptions[_type.id] -= 1
+                        if new_ctx.covered_exceptions[_type.id] == 0:
+                            del new_ctx.covered_exceptions[_type.id]
                 else:
-                    new_ctx.covered_exceptions[handler.type.id] = new_ctx.covered_exceptions.get(handler.type.id, 0) + 1
-        
-        if isinstance(node, ast.ExceptHandler):
-            if isinstance(node.type, ast.Tuple):
-                for _type in node.type.elts:
-                    new_ctx.covered_exceptions[_type.id] -= 1
-                    if new_ctx.covered_exceptions[_type.id] == 0:
-                        del new_ctx.covered_exceptions[_type.id]
-            else:
-                new_ctx.covered_exceptions[node.type.id] -= 1
-                if new_ctx.covered_exceptions[node.type.id] == 0:
-                    del new_ctx.covered_exceptions[node.type.id]
+                    new_ctx.covered_exceptions[n.type.id] -= 1
+                    if new_ctx.covered_exceptions[n.type.id] == 0:
+                        del new_ctx.covered_exceptions[n.type.id]
+                print(new_ctx.covered_exceptions)
+                self.generic_visit(n)
 
-        if isinstance(node, ast.Raise):
-            exception_name = self._get_exception_name(node)
+                
+
+        print(func, new_ctx.covered_exceptions)
+        v = _Visitor(log_id=func.__name__)
+        v.visit(ast.parse(source))
+
+        for n in v.nodes:
+            if isinstance(n, (ast.Call, ast.Name)):
+                exception_name = n.id if isinstance(n, ast.Name) else n.func.id
+
+                # TODO: must check if the exception is a subclass of the caught exception
+                # TODO: also here IOSError -> returns OSError, so get by key from somewhere else like builtins
+                # if exc_name in vars:
+                #     print(vars[exc_name])
+
+
+                # exception_name = self._get_exception_name(n)
 
             # TODO: must check also with parent classes, i.e. if the exception is a subclass of the caught exception
             # print("     " * _depth, exception_name)
 
-            if exception_name not in new_ctx.covered_exceptions:
-                debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{_ctx.fp}", line {node.lineno}']
-                verbose_stack = '\n'.join(debug_log)
-                self._ok = False
-                print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
-                # warnings.warn(f"<Bubble> {self.fp} {exception_name} not handled:\n{verbose_stack}")
+                if exception_name not in new_ctx.covered_exceptions:
+                    line_offset = open(new_ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
+                    debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in new_ctx.stack] + [f'        {exception_name} File: "{new_ctx.fp}", line {line_offset + n.lineno}']
+                    verbose_stack = '\n'.join(debug_log)
+                    self._ok = False
+                    print(self._ok)
+                    print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
 
-            # TODO: must decrease the count of the exception in the context
 
-        # Function Call
-        if self._is_method(node, _ctx):
-            method_name = node.attr
-            new_ctx.stack = [s for s in new_ctx.stack] + [(method_name, node.lineno, _ctx.fp)]
-
-            # get class node
-            class_node = self._mem_addr_to_class_node.get(hex(id(node.ctx)))
-            if class_node is None:
-                warnings.warn(f'Not exploring method ".{method_name}" File: "{self.fp}", line {node.lineno}')
-                return
-
-            for _n in ast.walk(class_node):
-                if isinstance(_n, ast.FunctionDef) and _n.name == method_name:
-                    self._process_fcn(_n, _depth+1, new_ctx)
-
-        if self._is_fcn(node, _ctx):
-            fcn_name = node.id
-            # print('FCCCCCCCN ', fcn_name)
-            new_ctx.stack = [s for s in new_ctx.stack] + [(fcn_name, node.lineno, _ctx.fp)]
-
-            # TODO: I have to enter the function recursively.
-            # Have to go to fcn sub, then check if it is calling any functions.
-            # Need to do DFS, forwarding context of all caught exceptions and then start checking if the function is raising any of the exceptions that are caught in the context.
-            # print(fcn_name, hasattr(self._current_module, fcn_name))
-
-            # TODO: do a lookup in the order function -> module -> builtins
-            # I think you could reverse search from the context.prev and embedd within the ctx the scope
-
-            if not hasattr(_ctx.module, fcn_name):
-
-                if __builtins__.get(fcn_name):
-                    warnings.warn(f"Function {fcn_name} is builtin so ignoring")
-                    return
-
-                # TODO: handle inner functions as those are not exposed to module
-                warnings.warn(f"Function {fcn_name} not found in {_ctx.fp}")
-                return
-
-            fcn = getattr(_ctx.module, fcn_name)
-            is_builtin = isinstance(fcn, types.BuiltinFunctionType)
-
-            if is_builtin:
-                # TODO: cached version of all exceptiosn the builtin functions can raise
-                warnings.warn(f"Function {fcn_name} is builtin so ignoring")
-                return
-
-            is_class = inspect.isclass(fcn)
-
-            if is_class:
-                fcn_file_path = inspect.getfile(fcn.__init__)
-            else:
-                fcn_file_path = inspect.getfile(fcn)
-
-            # fcn is defined within same file
-            within_class = False # TODO: this will break for nested class definitions
-            if fcn_file_path == self.fp:
-                print(fcn_name, 'same file')
-                for _n in ast.walk(ast.parse(self.source_code)):
-                    if not is_class and isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
-                        self._process_fcn(_n, _depth+1, new_ctx)
-                    if is_class and isinstance(_n, ast.ClassDef) and _n.name == fcn_name:
-                        within_class = True
-                        self._mem_addr_to_class_node[hex(id(node.ctx))] = _n
-                        continue
-                    if is_class and isinstance(_n, ast.FunctionDef) and _n.name == '__init__' and within_class:
-                        self._process_fcn(_n, _depth+1, new_ctx)
-            else:
-                fcn_module = inspect.getmodule(fcn)
-
-                nested_new_ctx = self._deep_copy_ctx(new_ctx)
-                nested_new_ctx.fp = fcn_file_path
-                nested_new_ctx.module = fcn_module
-                with open(fcn_file_path, 'r') as file:
-                    fcn_source_code = file.read()
-                    fcn_file_ast = ast.parse(fcn_source_code, filename=fcn_file_path)
-
-                for _n in ast.walk(fcn_file_ast):
-                    if isinstance(_n, ast.FunctionDef) and _n.name == fcn_name:
-                        self._process_fcn(_n, _depth+1, nested_new_ctx)
-
-        for child_node in ast.iter_child_nodes(node):
-            self._process_fcn(child_node, _depth+1, new_ctx)
 
     def are_exceptions_caught(self, node) -> bool:
-        self._process_fcn(node)
+        self._process_fcn(node, ids=set())
         return self._ok
-
-
-
-
+    
+    def process_fcn(self, fcn) -> bool:
+        self._process_fcn(fcn, _ids=set(), _depth=0, _ctx=None)
+        print(self._ok)
+        return self._ok
 
 
 class Bubble:
@@ -295,25 +342,20 @@ class Bubble:
     def _scan_file(self, file_path):
         file_scan = FileScan(fp=file_path)
 
-        entrypoint_found = False
-        for node in ast.walk(file_scan.ast_tree):
-            if isinstance(node, ast.FunctionDef) and node.name == self.entrypoint:
-                print('ENTRYPOINT FOUND ', node.name)
-                entrypoint_found = True
-                if not file_scan.are_exceptions_caught(node):
-                    self._exit_code = 1
-                    break
-            # if isinstance(node, ast.FunctionDef):
-            #     print(node.name)
-        if not entrypoint_found:
+        if not hasattr(file_scan._current_module, self.entrypoint):
             raise AttributeError(f"Entrypoint function not found: {self.entrypoint}")
         
+        entrypoint_fcn = getattr(file_scan._current_module, self.entrypoint)
+        return file_scan.process_fcn(entrypoint_fcn)
+
     def scan(self):
         if not os.path.exists(self.base_path):
             raise FileNotFoundError(f"File or directory not found: {self.base_path}")
     
         if os.path.isfile(self.base_path):
-            self._scan_file(self.base_path)
+            ok = self._scan_file(self.base_path)
+            if not ok:
+                self._exit_code = 1
             return self._exit_code
         
         # directory
@@ -321,7 +363,10 @@ class Bubble:
             for file in files:
                 if file.endswith(".py"):
                     file_path = os.path.join(root, file)
-                    self._scan_file(file_path)
+                    ok = self._scan_file(file_path)
+                    if not ok:
+                        self._exit_code = 1
 
         return self._exit_code
+    
 

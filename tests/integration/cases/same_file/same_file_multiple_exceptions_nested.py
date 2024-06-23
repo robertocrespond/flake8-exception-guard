@@ -19,8 +19,7 @@ def sub5() -> int:
     try:
         b = sub3()
     except ImportError:
-        b = 3
-
+        ...
     return  b
 
 

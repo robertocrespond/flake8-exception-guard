@@ -20,6 +20,8 @@ def handled():
     return 1 + b
 
 def unhandled():
+
+    
     b = raises_io_error()
     
     return 1 + b
