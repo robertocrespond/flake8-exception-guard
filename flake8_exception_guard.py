@@ -1,16 +1,21 @@
+import sys
 import ast
-import builtins
-import os
+from typing import Any, Generator, Tuple, Type, Optional
 from importlib import util as importlib_util
-import re
-from typing import Optional
-import inspect
-from copy import deepcopy
+import builtins
 import textwrap
+import inspect
 from collections import ChainMap
-
-
+from copy import deepcopy
 from dataclasses import dataclass
+import re
+
+
+if sys.version_info >= (3, 8):
+    import importlib.metadata as importlib_metadata
+else:
+    import importlib_metadata
+import os
 
 @dataclass
 class Context:
@@ -22,7 +27,6 @@ class Context:
 
     def __repr__(self) -> str:
         return f'Context({self.covered_exceptions}, {self.stack}, {self.fp})'
-    
 
 class FileScan:
     def __init__(self, fp: str):
@@ -39,6 +43,8 @@ class FileScan:
         current_module_spec = importlib_util.spec_from_file_location('current_module', fp)
         self._current_module = importlib_util.module_from_spec(current_module_spec)
         current_module_spec.loader.exec_module(self._current_module)
+
+        self.errors = set()
 
     def check_if_exception_is_uncovered(self, ctx, source, n, exception_name):
         if hasattr(builtins, exception_name):
@@ -69,10 +75,14 @@ class FileScan:
 
         if exc_covered is False:
             line_offset = open(ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
-            debug_log = [f'        {s[0]} File: "{s[2]}", line {s[1]},' for s in ctx.stack] + [f'        {exception_name} File: "{ctx.fp}", line {line_offset + n.lineno}']
+            debug_log = [f'        {s[0]} File: "{s[3]}", line {s[1]},' for s in ctx.stack] + [f'        {exception_name} File: "{ctx.fp}", line {line_offset + n.lineno}']
+            lines = [(s[1], s[2]) for s in ctx.stack] + [(line_offset + n.lineno, n.col_offset)]
             verbose_stack = '\n'.join(debug_log)
             self._ok = False
-            print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
+            # print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
+            # self.errors.add((line_offset + n.lineno, n.col_offset, f"{exception_name} not handled:\n{verbose_stack}"))
+            # Give first line/col as its not where the exception is raised, but where code could/should be addressed
+            self.errors.add((lines[0][0], lines[0][1], f"{exception_name} not handled\n{verbose_stack}"))
 
     def _get_exception_name(self, node):
         if isinstance(node.exc, ast.Attribute):
@@ -110,7 +120,7 @@ class FileScan:
             vars = ChainMap(*inspect.getclosurevars(func)[:3])
             source = textwrap.dedent(inspect.getsource(func))
         except (TypeError, OSError):
-            exc = re.findall(r'\w+Error', func.__doc__)
+            exc = [e for e in re.findall(r'\w+Error', func.__doc__) if hasattr(builtins, e)]
             for exception_name in exc:
                 self.check_if_exception_is_uncovered(ctx=new_ctx, source=source, n=_ctx.node, exception=exception_name)
             return
@@ -143,7 +153,7 @@ class FileScan:
                             try:
                                 ob = getattr(ob, name)
                             except AttributeError:
-                                exc = re.findall(r'\w+Error', ob.__doc__)
+                                exc = [e for e in re.findall(r'\w+Error', ob.__doc__) if hasattr(builtins, e)]
                                 for exception_name in exc:
                                     upstream_cls.check_if_exception_is_uncovered(ctx=new_ctx, source=source, n=n, exception_name=exception_name)
 
@@ -154,7 +164,7 @@ class FileScan:
                 if ob is not None and id(ob) not in _ids:
                     line_offset = open(new_ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
                     fwd_ctx = upstream_cls._deep_copy_ctx(new_ctx)
-                    fwd_ctx.stack = [s for s in fwd_ctx.stack] + [(ob.__name__, line_offset + n.lineno, new_ctx.fp)]
+                    fwd_ctx.stack = [s for s in fwd_ctx.stack] + [(ob.__name__, line_offset + n.lineno, n.col_offset, new_ctx.fp)]
                     fwd_ctx.node = n
                     upstream_cls._process_fcn(ob, _ids=_ids, _depth=_depth+1, _ctx=fwd_ctx)
                     _ids.add(id(ob))
@@ -190,10 +200,7 @@ class FileScan:
                 self.generic_visit(n)
 
         v = _Visitor(log_id=func.__name__)
-        print(func, new_ctx.stack)
         v.visit(ast.parse(source))
-        print(func, v.nodes, new_ctx.stack)
-
 
         for n in v.nodes:
             if isinstance(n, (ast.Call, ast.Name)):
@@ -205,45 +212,57 @@ class FileScan:
         return self._ok
     
     def process_fcn(self, fcn) -> bool:
-        self.errors = []
+        self.errors = set()
         self._process_fcn(fcn, _ids=set(), _depth=0, _ctx=None)
         return self._ok
-
-
-class Bubble:
-    def __init__(self, base_path: str, entrypoint: str) -> None:
-        self.base_path = base_path
-        self.entrypoint = entrypoint
-        self._exit_code = 0
-
-    def _scan_file(self, file_path):
-        file_scan = FileScan(fp=file_path)
-
-        if not hasattr(file_scan._current_module, self.entrypoint):
-            raise AttributeError(f"Entrypoint function not found: {self.entrypoint}")
-        
-        entrypoint_fcn = getattr(file_scan._current_module, self.entrypoint)
-        return file_scan.process_fcn(entrypoint_fcn)
-
-    def scan(self):
-        if not os.path.exists(self.base_path):
-            raise FileNotFoundError(f"File or directory not found: {self.base_path}")
     
-        if os.path.isfile(self.base_path):
-            ok = self._scan_file(self.base_path)
-            if not ok:
-                self._exit_code = 1
-            return self._exit_code
+    def clear_errors(self):
+        self.errors = set()
+
+
+class Plugin:
+    name = __name__
+    version = importlib_metadata.version(__name__)
+
+    def __init__(self, filename, lines, tree: ast.AST) -> None:
+        self._tree = tree
+        self.filename = filename
+        self.fscan = FileScan(os.path.abspath(self.filename))
+        self.lines = lines
+        # print(f'{lines=}')
+
+    def run(self) -> Generator[Tuple[int, int, str, Type[Any]], None, None]:
+        # Executed for every file, hence why its a generator
+
+        for node in ast.walk(self._tree):
+            if isinstance(node, ast.FunctionDef):
+                if node.name in self.fscan._current_module.__dict__:
+                    self.fscan.process_fcn(self.fscan._current_module.__dict__[node.name])
+                for error in self.fscan.errors:
+                    yield (error[0], error[1], f"FEG001 [{node.name}] {error[2]}", type(self))
+                self.fscan.clear_errors()
+
+            elif isinstance(node, ast.ClassDef):
+                if node.name not in self.fscan._current_module.__dict__:
+                    return
+                
+                cls = self.fscan._current_module.__dict__[node.name]
+                
+                for function_def in node.body:
+                    if isinstance(function_def, ast.FunctionDef):
+                        if function_def.name in cls.__dict__:
+                            self.fscan.process_fcn(cls.__dict__[function_def.name])
+                        for error in self.fscan.errors:
+                            yield (error[0], error[1], f"FEG001 [{function_def.name}] {error[2]}", type(self))
+                        self.fscan.clear_errors()
+
+                # import astpretty
+                # print(astpretty.pprint(node))
+                # visitor = Visitor()
         
-        # directory
-        for root, dirs, files in os.walk(self.base_path):
-            for file in files:
-                if file.endswith(".py"):
-                    file_path = os.path.join(root, file)
-                    ok = self._scan_file(file_path)
-                    if not ok:
-                        self._exit_code = 1
 
-        return self._exit_code
-    
 
+
+
+        # visitor = Visitor()
+        yield (1, 0, "FEG001 asdasd", type(self))

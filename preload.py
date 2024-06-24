@@ -151,7 +151,7 @@ def get_exceptions(func, ids=set()):
 if __name__ == '__main__':
     print('\n\n------------------[SE]--------------\n\n')
     from bubble.bubble import Bubble
-    # x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'tests', 'integration', 'cases', 'same_file', 'same_file_multiple_exceptions_nested.py'), entrypoint='unhandled').scan()
-    x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'preload.py'), entrypoint='f').scan()
+    x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'tests', 'integration', 'cases', 'same_file', 'same_file_single_exception.py'), entrypoint='unhandled').scan()
+    # x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'preload.py'), entrypoint='sub').scan()
 
 # print(x)
