@@ -31,6 +31,7 @@ def unhandled():
     
     return 1 + b
 
+
 class A():
     def xyz():
-        raise IndentationError
+        x  = sub() # noqa: FEG001

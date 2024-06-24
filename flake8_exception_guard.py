@@ -74,7 +74,13 @@ class FileScan:
                 break
 
         if exc_covered is False:
-            line_offset = open(ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
+            line_offset = 0
+            for i, line in enumerate(open(ctx.fp, 'r').readlines()):
+                if textwrap.dedent(source).split('\n')[0] in line:
+                    line_offset = i
+                    break
+
+            # line_offset = open(ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
             debug_log = [f'        {s[0]} File: "{s[3]}", line {s[1]},' for s in ctx.stack] + [f'        {exception_name} File: "{ctx.fp}", line {line_offset + n.lineno}']
             lines = [(s[1], s[2]) for s in ctx.stack] + [(line_offset + n.lineno, n.col_offset)]
             verbose_stack = '\n'.join(debug_log)
@@ -119,6 +125,7 @@ class FileScan:
         try:
             vars = ChainMap(*inspect.getclosurevars(func)[:3])
             source = textwrap.dedent(inspect.getsource(func))
+            # source = inspect.getsource(func)
         except (TypeError, OSError):
             exc = [e for e in re.findall(r'\w+Error', func.__doc__) if hasattr(builtins, e)]
             for exception_name in exc:
@@ -162,7 +169,11 @@ class FileScan:
                         ob = vars[c.id]
 
                 if ob is not None and id(ob) not in _ids:
-                    line_offset = open(new_ctx.fp, 'r').readlines().index(textwrap.dedent(source).split('\n')[0] + '\n')
+                    line_offset = 0
+                    for i, line in enumerate(open(new_ctx.fp, 'r').readlines()):
+                        if textwrap.dedent(source).split('\n')[0] in line:
+                            line_offset = i
+                            break
                     fwd_ctx = upstream_cls._deep_copy_ctx(new_ctx)
                     fwd_ctx.stack = [s for s in fwd_ctx.stack] + [(ob.__name__, line_offset + n.lineno, n.col_offset, new_ctx.fp)]
                     fwd_ctx.node = n
