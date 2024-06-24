@@ -41,20 +41,29 @@ class FileScan:
         current_module_spec.loader.exec_module(self._current_module)
 
     def check_if_exception_is_uncovered(self, ctx, source, n, exception_name):
+        print(f"Checking if {exception_name} is uncovered. ctx: {ctx.covered_exceptions}")
         if hasattr(builtins, exception_name):
             exc_cls = getattr(builtins, exception_name)
+            print(f"Builtins: {exc_cls}")
         else:
             spec = importlib_util.spec_from_file_location('current_module', ctx.fp)
             module = importlib_util.module_from_spec(spec)
             spec.loader.exec_module(module)
             # get by key from somewhere else like builtins, maybe the current module
             exc_cls = getattr(module, exception_name, None)
+            print(f"Module: {exc_cls}")
 
         if exc_cls:
             # skip object base class
             anscestors = [anscestor.__name__ for anscestor in inspect.getmro(exc_cls)[:-1]]
         else:
             anscestors = [exception_name]
+
+        # FIXME: handles exceptions such as IOError that its class is OSError, so if IOError is explicitely caught, it should be included in the anscestors
+        if exception_name not in anscestors:
+            anscestors.insert(0, exception_name)
+
+        print(f"Anscestors: {anscestors}")
 
         exc_covered = False
         for anscestor in anscestors:
