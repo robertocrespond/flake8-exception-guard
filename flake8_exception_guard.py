@@ -266,14 +266,3 @@ class Plugin:
                         for error in self.fscan.errors:
                             yield (error[0], error[1], f"FEG001 [{function_def.name}] {error[2]}", type(self))
                         self.fscan.clear_errors()
-
-                # import astpretty
-                # print(astpretty.pprint(node))
-                # visitor = Visitor()
-        
-
-
-
-
-        # visitor = Visitor()
-        yield (1, 0, "FEG001 asdasd", type(self))
