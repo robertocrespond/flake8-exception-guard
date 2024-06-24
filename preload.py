@@ -6,7 +6,10 @@ from textwrap import dedent
 import ast, os
 from other_code_2 import ultimate_test
 import types
-class MyException(Exception):
+
+class MyCustomException(Exception):
+    pass
+class MyCustomExceptionSub(MyCustomException):
     pass
 
 def sub3() -> int:
@@ -15,7 +18,7 @@ def sub3() -> int:
     return 5 + sub4()
 
 def sub4() -> int:
-    raise ImportError
+    raise MyCustomException
     return 5
 
 def sub5() -> int:
@@ -35,7 +38,7 @@ def f2():
 
 def g():
     # os.makedirs()
-    raise Exception
+    raise MyCustomException
 
 class A():
     def method():
@@ -45,7 +48,7 @@ import random
 def f(x):
     try:
         x = f2()
-    except MyException:
+    except MyCustomExceptionSub:
         x = 3
     # A.method()
     # s = random.choice()
@@ -145,9 +148,10 @@ def get_exceptions(func, ids=set()):
 # for e in get_exceptions(unhandled):
 #     print(e)
 
-
-print('\n\n------------------[SE]--------------\n\n')
-from bubble.bubble import Bubble
-x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'tests', 'integration', 'cases', 'same_file', 'same_file_multiple_exceptions_nested.py'), entrypoint='unhandled').scan()
+if __name__ == '__main__':
+    print('\n\n------------------[SE]--------------\n\n')
+    from bubble.bubble import Bubble
+    # x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'tests', 'integration', 'cases', 'same_file', 'same_file_multiple_exceptions_nested.py'), entrypoint='unhandled').scan()
+    x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'preload.py'), entrypoint='f').scan()
 
 # print(x)
