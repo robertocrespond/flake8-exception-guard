@@ -1,50 +1,61 @@
+import ast
 import builtins
-from inspect import getclosurevars, getsource
-from collections import ChainMap
+import os
 import re
+from collections import ChainMap
+from inspect import getclosurevars
+from inspect import getsource
 from textwrap import dedent
-import ast, os
-from other_code_2 import ultimate_test
-import types
+
 
 class MyCustomException(Exception):
     pass
+
+
 class MyCustomExceptionSub(MyCustomException):
     pass
+
 
 def sub3() -> int:
     if 102 > 101:
         raise AttributeError
     return 5 + sub4()
 
+
 def sub4() -> int:
     raise MyCustomException
     return 5
+
 
 def sub5() -> int:
     try:
         b = sub3()
     except ImportError:
         b = 3
-    return  b
+    return b
+
 
 def unhandled():
     b = sub5()
-    
+
     return 1 + b
+
 
 def f2():
     x = g()
+
 
 def g():
     # os.makedirs()
     raise MyCustomException
 
-class A():
+
+class A:
     def method():
         g()
         raise IndentationError
-import random
+
+
 def f(x):
     try:
         x = f2()
@@ -67,7 +78,7 @@ def get_exceptions(func, ids=set()):
     except TypeError:
         return
     except OSError:
-        exc = re.findall(r'\w+Error', func.__doc__)
+        exc = re.findall(r"\w+Error", func.__doc__)
         if exc:
             for e in exc:
                 if hasattr(builtins, e):
@@ -87,7 +98,7 @@ def get_exceptions(func, ids=set()):
             c, ob = n.func, None
             if isinstance(c, ast.Attribute):
                 parts = []
-                while getattr(c, 'value', None):
+                while getattr(c, "value", None):
                     parts.append(c.attr)
                     c = c.value
                 if c.id in vars:
@@ -103,7 +114,7 @@ def get_exceptions(func, ids=set()):
                 self.other.append(ob)
                 ids.add(id(ob))
 
-            print(f'[{self.log_id}: Call]', n.func.id, self.nodes, self.other)
+            print(f"[{self.log_id}: Call]", n.func.id, self.nodes, self.other)
 
         def visit_Expr(self, n):
             if not isinstance(n.value, ast.Call):
@@ -111,7 +122,7 @@ def get_exceptions(func, ids=set()):
             c, ob = n.value.func, None
             if isinstance(c, ast.Attribute):
                 parts = []
-                while getattr(c, 'value', None):
+                while getattr(c, "value", None):
                     parts.append(c.attr)
                     c = c.value
                 if c.id in vars:
@@ -133,7 +144,7 @@ def get_exceptions(func, ids=set()):
     v.visit(node)
     print(v.nodes, v.other)
     print()
-    
+
     for n in v.nodes:
         if isinstance(n, (ast.Call, ast.Name)):
             name = n.id if isinstance(n, ast.Name) else n.func.id
@@ -143,15 +154,27 @@ def get_exceptions(func, ids=set()):
     for o in v.other:
         yield from get_exceptions(o)
 
+
 # from tests.integration.cases.self_contained_module.single_exception import unhandled
 # import random
 # for e in get_exceptions(unhandled):
 #     print(e)
 
-if __name__ == '__main__':
-    print('\n\n------------------[SE]--------------\n\n')
+if __name__ == "__main__":
+    print("\n\n------------------[SE]--------------\n\n")
     from bubble.bubble import Bubble
-    x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'tests', 'integration', 'cases', 'same_file', 'same_file_single_exception.py'), entrypoint='unhandled').scan()
+
+    x = Bubble(
+        base_path=os.path.join(
+            os.path.dirname(__file__),
+            "tests",
+            "integration",
+            "cases",
+            "same_file",
+            "same_file_single_exception.py",
+        ),
+        entrypoint="unhandled",
+    ).scan()
     # x = Bubble(base_path=os.path.join(os.path.dirname(__file__), 'preload.py'), entrypoint='sub').scan()
 
 # print(x)
