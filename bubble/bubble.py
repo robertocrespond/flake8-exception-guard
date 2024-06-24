@@ -69,21 +69,6 @@ class FileScan:
             self._ok = False
             print(f"{self.fp} {exception_name} not handled:\n{verbose_stack}")
 
-
-        # print(exception_name, self._current_module.)
-
-        # TODO: must check if the exception is a subclass of the caught exception
-            # TODO: also here IOSError -> returns OSError, so get by key from somewhere else like builtins
-            # if exc_name in vars:
-            #     print(vars[exc_name])
-
-
-            # exception_name = self._get_exception_name(n)
-
-        # TODO: must check also with parent classes, i.e. if the exception is a subclass of the caught exception
-        # print("     " * _depth, exception_name)
-  
-
     def _get_exception_name(self, node):
         if isinstance(node.exc, ast.Attribute):
             return f"{node.exc.value.id}.{node.exc.attr}"
